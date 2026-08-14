@@ -289,33 +289,37 @@ export class World {
       tl.to(this.car.group, { visible: false, duration: 0.01 }, 2.5);
     }
 
-    // Phase C — radiator core rush.
-    tl.to(cam, { z: -100, duration: 1.0, ease: "power1.in" }, 2.55);
-    tl.to(this.camera, { fov: 50, duration: 1.0 }, 2.55);
+    const stages = this.tunnel.stages;
+
+    // Phase C — radiator core rush, handing off exactly where the fins end.
+    tl.to(cam, { z: stages.radiatorEndZ, duration: 0.95, ease: "power1.in" }, 2.55);
+    tl.to(this.camera, { fov: 50, duration: 0.95 }, 2.55);
     tl.to(proxy, { roll: -0.05, duration: 0.9 }, 2.55);
 
     // Rise to piston height before we reach the engine bay (its base deck is
     // a solid mesh well below this line, so the flyover clears it entirely).
     tl.to(cam, { y: 2.3, duration: 0.55, ease: "sine.inOut" }, 2.85);
-    tl.to(cam, { y: 0.4, duration: 0.55, ease: "sine.inOut" }, 4.75);
+    tl.to(cam, { y: 0.4, duration: 0.55, ease: "sine.inOut" }, 6.35);
 
-    // Phase D — engine bay flyover, slow to let the pistons read.
-    tl.to(cam, { z: -148, duration: 1.35, ease: "power1.inOut" }, 3.5);
+    // Phase D — engine bay flyover, a long weave down the full piston
+    // corridor (nine banks deep) so the pumping pistons stay in view the
+    // whole way through instead of flashing past in an instant.
+    tl.to(cam, { z: stages.engineEndZ, duration: 3.4, ease: "power1.inOut" }, 3.5);
     tl.to(this.camera, { fov: 40, duration: 1.0 }, 3.5);
-    tl.to(cam, { x: 1.6, duration: 0.7, yoyo: true, repeat: 1, ease: "sine.inOut" }, 3.5);
+    tl.to(cam, { x: 1.8, duration: 0.85, yoyo: true, repeat: 3, ease: "sine.inOut" }, 3.5);
     tl.to(proxy, { roll: 0, duration: 0.6 }, 3.5);
 
     // Phase E — exhaust pipe, full send.
-    tl.to(cam, { z: -204, duration: 1.05, ease: "power3.in" }, 4.95);
-    tl.to(this.camera, { fov: 66, duration: 1.05, ease: "power2.in" }, 4.95);
-    tl.to(proxy, { roll: 0.4, duration: 1.05 }, 4.95);
-    tl.to(this.tunnel.stages.exhaustFlare, { intensity: 26, duration: 0.5 }, 5.4);
+    tl.to(cam, { z: stages.exhaustStartZ - 58, duration: 1.05, ease: "power3.in" }, 6.85);
+    tl.to(this.camera, { fov: 66, duration: 1.05, ease: "power2.in" }, 6.85);
+    tl.to(proxy, { roll: 0.4, duration: 1.05 }, 6.85);
+    tl.to(this.tunnel.stages.exhaustFlare, { intensity: 26, duration: 0.5 }, 7.3);
 
     // Phase F — exit flare and settle into the hero backdrop.
-    tl.to(cam, { z: -214, duration: 0.35, ease: "power1.out" }, 6.0);
-    tl.to(this.camera, { fov: 42, duration: 0.6, ease: "power2.out" }, 6.0);
-    tl.to(this.tunnel.stages.exhaustFlare, { intensity: 0, duration: 0.8 }, 6.35);
-    tl.to(proxy, { roll: 0, duration: 0.6 }, 6.0);
+    tl.to(cam, { z: stages.exhaustEndZ - 4, duration: 0.35, ease: "power1.out" }, 7.9);
+    tl.to(this.camera, { fov: 42, duration: 0.6, ease: "power2.out" }, 7.9);
+    tl.to(this.tunnel.stages.exhaustFlare, { intensity: 0, duration: 0.8 }, 8.25);
+    tl.to(proxy, { roll: 0, duration: 0.6 }, 7.9);
 
     this._roll = proxy;
     this._transitionTimeline = tl;
@@ -328,7 +332,8 @@ export class World {
     this._revealing = false;
     if (this.tunnel) this.tunnel.root.visible = true;
     if (this.car) this.car.group.visible = false;
-    this.camera.position.set(0, 0.4, -214);
+    const restZ = this.tunnel ? this.tunnel.stages.exhaustEndZ - 4 : -222;
+    this.camera.position.set(0, 0.4, restZ);
     this.camera.fov = 42;
     this.camera.updateProjectionMatrix();
   }

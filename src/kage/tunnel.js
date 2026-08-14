@@ -73,66 +73,85 @@ function buildRadiatorStage() {
 }
 
 /**
- * Engine bay: a block with a bank of pistons pumping in their bores.
- * Returns { group, update(t) } so main.js can animate the pistons.
+ * Engine bay: a long corridor of repeated piston banks pumping in their
+ * bores, so the camera flies alongside continuously-visible pistons for
+ * the whole engine phase instead of passing a single thin row in an instant.
+ * Returns { group, length, update(t) } so main.js can animate the pistons.
  */
 function buildEngineStage() {
   const group = new THREE.Group();
   const pistons = [];
 
+  const rowSpacing = 9;
+  const rowCount = 9;
+  const corridorLength = (rowCount - 1) * rowSpacing;
+
   // A low base deck well below the flight path — the camera flies level
   // past the piston bank at its own height rather than through a solid mass.
-  const base = new THREE.Mesh(new THREE.BoxGeometry(17, 2.4, 22), darkMaterial(0x111318));
-  base.position.y = -5.2;
+  const base = new THREE.Mesh(
+    new THREE.BoxGeometry(17, 2.4, corridorLength + 10),
+    darkMaterial(0x111318)
+  );
+  base.position.set(0, -5.2, -corridorLength / 2);
   group.add(base);
 
   const restY = 2.2;
   const cylCount = 4;
   const boreMat = chromeMaterial(0x9aa2ad);
-  const pistonMat = chromeMaterial(0xe7eaef);
   const rodMat = darkMaterial(0x1a1c20);
+  const pistonGeo = new THREE.CylinderGeometry(1.42, 1.42, 1.6, 16);
 
-  for (let i = 0; i < cylCount; i++) {
-    const x = (i / (cylCount - 1) - 0.5) * 13;
+  // 9 rows x 4 pistons = 36 ignition points — real THREE.PointLights at that
+  // count are a severe per-fragment cost (every light is evaluated for every
+  // lit pixel). An emissive flash on each piston's own material reads the
+  // same as a spark and costs nothing extra to render.
+  for (let r = 0; r < rowCount; r++) {
+    const z = -r * rowSpacing;
+    const rowPhase = r * 0.9; // stagger rows so the bank doesn't pulse in lockstep
 
-    const bore = new THREE.Mesh(
-      new THREE.CylinderGeometry(1.55, 1.55, 6, 20, 1, true),
-      boreMat
-    );
-    bore.material.side = THREE.BackSide;
-    bore.position.set(x, restY, 0);
-    group.add(bore);
+    for (let i = 0; i < cylCount; i++) {
+      const x = (i / (cylCount - 1) - 0.5) * 13;
 
-    const piston = new THREE.Mesh(
-      new THREE.CylinderGeometry(1.42, 1.42, 1.6, 20),
-      pistonMat
-    );
-    piston.position.set(x, restY, 0);
-    group.add(piston);
+      const bore = new THREE.Mesh(
+        new THREE.CylinderGeometry(1.55, 1.55, 6, 16, 1, true),
+        boreMat
+      );
+      bore.material.side = THREE.BackSide;
+      bore.position.set(x, restY, z);
+      group.add(bore);
 
-    const rod = new THREE.Mesh(new THREE.BoxGeometry(0.4, 4, 0.4), rodMat);
-    rod.position.set(x, restY - 2.6, 0);
-    group.add(rod);
+      const pistonMat = chromeMaterial(0xe7eaef);
+      pistonMat.emissive = new THREE.Color(0xff8a3d);
+      pistonMat.emissiveIntensity = 0;
+      const piston = new THREE.Mesh(pistonGeo, pistonMat);
+      piston.position.set(x, restY, z);
+      group.add(piston);
 
-    const spark = new THREE.PointLight(0xff8a3d, 0, 6);
-    spark.position.set(x, restY + 3, 0);
-    group.add(spark);
+      const rod = new THREE.Mesh(new THREE.BoxGeometry(0.4, 4, 0.4), rodMat);
+      rod.position.set(x, restY - 2.6, z);
+      group.add(rod);
 
-    pistons.push({ piston, rod, spark, restY, phase: (i / cylCount) * Math.PI * 2 });
+      pistons.push({
+        piston,
+        rod,
+        restY,
+        phase: (i / cylCount) * Math.PI * 2 + rowPhase,
+      });
+    }
   }
 
   function update(t) {
-    for (const { piston, rod, spark, restY: base, phase } of pistons) {
+    for (const { piston, rod, restY: base, phase } of pistons) {
       const cycle = Math.sin(t * 6 + phase);
       piston.position.y = base + cycle * 1.4;
       rod.position.y = piston.position.y - 2.6;
       rod.scale.y = 1 + cycle * 0.12;
       const ignite = Math.max(0, Math.sin(t * 6 + phase + Math.PI));
-      spark.intensity = ignite > 0.85 ? (ignite - 0.85) * 40 : 0;
+      piston.material.emissiveIntensity = ignite > 0.85 ? (ignite - 0.85) * 6 : 0;
     }
   }
 
-  return { group, update };
+  return { group, length: corridorLength, update };
 }
 
 /**
@@ -209,16 +228,23 @@ function buildExhaustStage() {
 export function buildTunnel() {
   const root = new THREE.Group();
 
+  const radiatorStartZ = -46;
+  const radiatorEndZ = radiatorStartZ - 25 * 1.6; // last of 26 fins, spaced 1.6 apart
+
   const radiator = buildRadiatorStage();
-  radiator.position.z = -46;
+  radiator.position.z = radiatorStartZ;
   root.add(radiator);
 
+  // The engine corridor picks up exactly where the radiator ends, and the
+  // exhaust picks up exactly where the corridor ends — no dead space between
+  // any two stages of the flythrough.
   const engine = buildEngineStage();
-  engine.group.position.z = -104;
+  engine.group.position.z = radiatorEndZ;
   root.add(engine.group);
 
+  const exhaustStartZ = radiatorEndZ - engine.length;
   const exhaust = buildExhaustStage();
-  exhaust.group.position.z = -150;
+  exhaust.group.position.z = exhaustStartZ;
   root.add(exhaust.group);
 
   const clock = { t: 0 };
@@ -232,11 +258,12 @@ export function buildTunnel() {
     root,
     update,
     stages: {
-      radiatorStartZ: -46,
-      radiatorEndZ: -46 - 26 * 1.6,
-      engineZ: -104,
-      exhaustStartZ: -150,
-      exhaustEndZ: -150 - exhaust.length,
+      radiatorStartZ,
+      radiatorEndZ,
+      engineStartZ: radiatorEndZ,
+      engineEndZ: exhaustStartZ,
+      exhaustStartZ,
+      exhaustEndZ: exhaustStartZ - exhaust.length,
       exhaustFlare: exhaust.flare,
     },
   };
