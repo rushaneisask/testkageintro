@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>KAGE — Shadows Move. Machines Follow.</title>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="scene"></canvas>
+
+      <div id="grain"></div>
+
+      <div id="loading" class="layer">
+        <div class="loading-mark">影</div>
+        <div class="loading-bar"><span></span></div>
+      </div>
+
+      <div id="intro-ui" class="layer">
+        <header class="intro-top">
+          <span class="intro-kicker">TEAM KAGE</span>
+          <span class="intro-kicker intro-kicker--right">AUTOMOTIVE CLUB</span>
+        </header>
+
+        <div class="intro-center">
+          <p class="intro-tagline">SHADOWS MOVE. <span>MACHINES FOLLOW.</span></p>
+          <button id="enter-btn" type="button">
+            <span class="enter-ring"></span>
+            <span class="enter-label">ENTER</span>
+          </button>
+          <p class="intro-hint">click the emblem or press enter</p>
+        </div>
+
+        <footer class="intro-bottom">
+          <span>CARS · CULTURE · RACING</span>
+        </footer>
+      </div>
+
+      <button id="skip-btn" type="button">SKIP ▸</button>
+
+      <main id="hero" class="hero">
+        <nav class="hero-nav">
+          <span class="hero-nav__mark">KAGE</span>
+          <div class="hero-nav__links">
+            <a href="#">Garage</a>
+            <a href="#">Files</a>
+            <a href="#">Racing</a>
+            <a href="#">Shop</a>
+          </div>
+        </nav>
+        <div class="hero-content">
+          <p class="hero-eyebrow">EST. 2024 · NIGHT SHIFT</p>
+          <h1>WELCOME TO<br />THE SHADOWS.</h1>
+          <p class="hero-sub">A car culture brand built around the crew, the cars and the nights.</p>
+          <div class="hero-actions">
+            <button class="btn-primary">Join The Crew</button>
+            <button class="btn-ghost">Watch Kage Run 001</button>
+          </div>
+        </div>
+      </main>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
