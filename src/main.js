@@ -16,11 +16,24 @@ const introUI = document.getElementById("intro-ui");
 const enterBtn = document.getElementById("enter-btn");
 const skipBtn = document.getElementById("skip-btn");
 const hero = document.getElementById("hero");
+const flashEl = document.getElementById("flash");
 const loadingBar = loading.querySelector(".loading-bar span");
 
-const world = new World(canvas);
-
 let started = false;
+
+const world = new World(canvas, {
+  onLoadProgress: (p) => {
+    gsap.to(loadingBar, { width: `${p * 100}%`, duration: 0.25, ease: "power1.out" });
+    if (p >= 1) {
+      gsap.to(loading, {
+        opacity: 0,
+        duration: 0.7,
+        delay: 0.15,
+        onComplete: () => (loading.style.display = "none"),
+      });
+    }
+  },
+});
 
 function revealHero() {
   hero.classList.add("visible");
@@ -37,6 +50,7 @@ function startTransition() {
       introUI.style.pointerEvents = "none";
     },
     onComplete: revealHero,
+    flashEl,
   });
 }
 
@@ -55,18 +69,4 @@ canvas.addEventListener("click", () => {
 skipBtn.addEventListener("click", skipIntro);
 window.addEventListener("keydown", (e) => {
   if (e.key === "Enter") startTransition();
-});
-
-// simulated boot sequence, then hand off to the intro UI
-gsap.to(loadingBar, {
-  width: "100%",
-  duration: 1.1,
-  ease: "power1.inOut",
-  onComplete: () => {
-    gsap.to(loading, {
-      opacity: 0,
-      duration: 0.7,
-      onComplete: () => (loading.style.display = "none"),
-    });
-  },
 });

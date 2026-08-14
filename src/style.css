@@ -39,6 +39,15 @@ body {
   height: 100%;
 }
 
+#flash {
+  position: absolute;
+  inset: 0;
+  z-index: 45;
+  background: #fff6ec;
+  opacity: 0;
+  pointer-events: none;
+}
+
 /* film grain overlay for mood */
 #grain {
   position: absolute;

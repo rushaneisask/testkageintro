@@ -1,6 +1,5 @@
 import * as THREE from "three";
 
-const RED = 0xd81324;
 const CHROME = 0xc7ccd4;
 const DARK = 0x0c0d10;
 
@@ -28,104 +27,6 @@ function emissiveMaterial(color, intensity = 2) {
     metalness: 0.2,
     roughness: 0.4,
   });
-}
-
-/**
- * Builds one kidney-grille panel: a rounded frame packed with vertical slats.
- * Homage to a tall, vertical "angel-eye" sport-coupe front end — fully
- * procedural, no copyrighted marks or exact reference geometry.
- */
-function buildKidneyPanel() {
-  const group = new THREE.Group();
-
-  const frame = new THREE.Mesh(
-    new THREE.CapsuleGeometry(2.6, 8, 6, 12),
-    darkMaterial(0x050506)
-  );
-  frame.rotation.z = 0;
-  group.add(frame);
-
-  const slatMat = chromeMaterial();
-  const slatCount = 9;
-  const slatGeo = new THREE.BoxGeometry(0.32, 9.4, 1.4);
-  const slats = new THREE.InstancedMesh(slatGeo, slatMat, slatCount);
-  const m = new THREE.Matrix4();
-  for (let i = 0; i < slatCount; i++) {
-    const t = i / (slatCount - 1) - 0.5;
-    m.makeTranslation(t * 4.2, 0, 3.2);
-    slats.setMatrixAt(i, m);
-  }
-  slats.instanceMatrix.needsUpdate = true;
-  group.add(slats);
-
-  const rim = new THREE.Mesh(
-    new THREE.TorusGeometry(0.05, 0.05, 8, 40),
-    emissiveMaterial(RED, 3)
-  );
-  rim.scale.set(2.7, 5.2, 1);
-  rim.position.z = 3.4;
-  group.add(rim);
-
-  return group;
-}
-
-function buildAngelEye() {
-  const group = new THREE.Group();
-
-  const housing = new THREE.Mesh(
-    new THREE.SphereGeometry(2.3, 24, 24, 0, Math.PI * 2, 0, Math.PI / 1.6),
-    darkMaterial(0x0a0b0d)
-  );
-  housing.rotation.x = Math.PI;
-  group.add(housing);
-
-  const corona = new THREE.Mesh(
-    new THREE.TorusGeometry(1.5, 0.14, 12, 48),
-    emissiveMaterial(0xeaf3ff, 4.5)
-  );
-  group.add(corona);
-
-  const core = new THREE.Mesh(
-    new THREE.SphereGeometry(0.55, 16, 16),
-    emissiveMaterial(0xbfd8ff, 3.5)
-  );
-  core.position.z = 0.3;
-  group.add(core);
-
-  const glow = new THREE.PointLight(0xbfd8ff, 8, 14);
-  glow.position.z = 1;
-  group.add(glow);
-
-  return group;
-}
-
-function buildGrilleStage() {
-  const group = new THREE.Group();
-
-  const left = buildKidneyPanel();
-  left.position.set(-2.6, 0, 0);
-  group.add(left);
-
-  const right = buildKidneyPanel();
-  right.position.set(2.6, 0, 0);
-  group.add(right);
-
-  const eyeL = buildAngelEye();
-  eyeL.position.set(-8.4, 0.4, -1.5);
-  group.add(eyeL);
-
-  const eyeR = buildAngelEye();
-  eyeR.position.set(8.4, 0.4, -1.5);
-  group.add(eyeR);
-
-  const bumper = new THREE.Mesh(
-    new THREE.BoxGeometry(24, 4.4, 3),
-    darkMaterial(0x08090b)
-  );
-  bumper.position.set(0, -6.6, -1.2);
-  group.add(bumper);
-
-  return group;
 }
 
 /**
@@ -308,10 +209,6 @@ function buildExhaustStage() {
 export function buildTunnel() {
   const root = new THREE.Group();
 
-  const grille = buildGrilleStage();
-  grille.position.z = -30;
-  root.add(grille);
-
   const radiator = buildRadiatorStage();
   radiator.position.z = -46;
   root.add(radiator);
@@ -335,7 +232,6 @@ export function buildTunnel() {
     root,
     update,
     stages: {
-      grilleZ: -30,
       radiatorStartZ: -46,
       radiatorEndZ: -46 - 26 * 1.6,
       engineZ: -104,

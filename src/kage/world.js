@@ -7,16 +7,19 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { buildEmblemGeometry } from "./emblem.js";
 import { buildTunnel } from "./tunnel.js";
+import { loadCarModel } from "./car.js";
 
 const RED = 0xd81324;
 
 export class World {
-  constructor(canvas, { onArrive } = {}) {
+  constructor(canvas, { onLoadProgress } = {}) {
     this.canvas = canvas;
-    this.onArrive = onArrive;
     this.clock = new THREE.Clock();
     this.pointer = new THREE.Vector2();
     this.state = "logo";
+    this.ready = false;
+    this.car = null;
+    this._revealing = false;
 
     this._initRenderer();
     this._initScene();
@@ -27,10 +30,28 @@ export class World {
     requestAnimationFrame(this._animate);
 
     // Defer the expensive, not-immediately-visible setup (env map prefiltering,
-    // tunnel geometry) so first paint of the spinning logo isn't blocked by it.
+    // tunnel geometry, the car model) so first paint of the spinning logo
+    // isn't blocked by it. The car is the only real download, so it drives
+    // the reported progress.
     setTimeout(() => {
       this._initEnvironment();
       this._initTunnel();
+      onLoadProgress?.(0.12);
+
+      loadCarModel({ onProgress: (p) => onLoadProgress?.(0.12 + p * 0.83) })
+        .then(({ group, noseZ, tailZ }) => {
+          group.visible = false;
+          this.scene.add(group);
+          this.car = { group, noseZ, tailZ };
+          this.renderer.compile(this.scene, this.camera);
+        })
+        .catch((err) => {
+          console.error("BMW model failed to load, continuing without it", err);
+        })
+        .finally(() => {
+          this.ready = true;
+          onLoadProgress?.(1);
+        });
     }, 0);
   }
 
@@ -45,6 +66,8 @@ export class World {
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.0;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer = renderer;
 
     this.camera = new THREE.PerspectiveCamera(
@@ -80,15 +103,36 @@ export class World {
     key.position.set(4, 6, 8);
     scene.add(key);
 
-    const rim = new THREE.PointLight(RED, 3.2, 18);
+    // Kept tight to the logo's own footprint — at full range these were
+    // tinting the car's paint and carbon hood with stray red/blue highlights.
+    const rim = new THREE.PointLight(RED, 3.2, 9);
     rim.position.set(-6, 2, -4);
     scene.add(rim);
 
-    const fillBlue = new THREE.PointLight(0x3a6bff, 1.3, 16);
+    const fillBlue = new THREE.PointLight(0x3a6bff, 1.3, 8);
     fillBlue.position.set(6, -2, 4);
     scene.add(fillBlue);
 
     scene.add(new THREE.AmbientLight(0x30323c, 0.5));
+
+    // Dedicated shadow-casting key light over the car-reveal area, so the
+    // M3 grounds itself on the floor instead of looking like it's floating.
+    const carKey = new THREE.DirectionalLight(0xfff4e0, 2.4);
+    carKey.position.set(12, 22, -14);
+    const carKeyTarget = new THREE.Object3D();
+    carKeyTarget.position.set(0, 0, -25);
+    scene.add(carKeyTarget);
+    carKey.target = carKeyTarget;
+    carKey.castShadow = true;
+    carKey.shadow.mapSize.set(2048, 2048);
+    carKey.shadow.camera.left = -16;
+    carKey.shadow.camera.right = 16;
+    carKey.shadow.camera.top = 16;
+    carKey.shadow.camera.bottom = -16;
+    carKey.shadow.camera.near = 5;
+    carKey.shadow.camera.far = 60;
+    carKey.shadow.bias = -0.0015;
+    scene.add(carKey);
 
     // A light that rides with the camera — keeps the tunnel interior readable
     // as it travels, without needing distant fixed lights to overexpose the
@@ -106,6 +150,7 @@ export class World {
     const floor = new THREE.Mesh(floorGeo, floorMat);
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = -5.4;
+    floor.receiveShadow = true;
     scene.add(floor);
 
     this._initParticles();
@@ -194,10 +239,11 @@ export class World {
   }
 
   /** Kicks off the click → flythrough → hero-reveal cinematic. */
-  playTransition({ onIntroFade, onComplete } = {}) {
-    if (this.state !== "logo" || !this.tunnel) return;
+  playTransition({ onIntroFade, onComplete, flashEl } = {}) {
+    if (this.state !== "logo" || !this.ready) return;
     this.state = "transition";
     this.tunnel.root.visible = true;
+    if (this.car) this.car.group.visible = true;
 
     const cam = this.camera.position;
     const proxy = { roll: 0 };
@@ -211,45 +257,65 @@ export class World {
 
     onIntroFade?.();
 
-    // Phase A — punch in on the emblem, then dissolve it into the grille.
+    // Phase A — punch in on the emblem, then dissolve it as the real car appears.
     tl.to(this.logoGroup.scale, { x: 1.35, y: 1.35, z: 1.35, duration: 0.5, ease: "power1.in" }, 0);
     tl.to(cam, { z: 3.2, duration: 0.9, ease: "power2.in" }, 0);
     tl.to(this.camera, { fov: 34, duration: 0.9, onUpdate: () => this.camera.updateProjectionMatrix() }, 0);
     tl.to(this.logoMaterial, { emissiveIntensity: 2.4, duration: 0.36, ease: "power2.in" }, 0.5);
     tl.to(this.logoGroup, { visible: false, duration: 0.01 }, 0.86);
 
-    // Phase B — through the grille.
-    tl.to(cam, { z: -34, duration: 1.0, ease: "power1.inOut" }, 0.82);
-    tl.to(this.camera, { fov: 46, duration: 1.0 }, 0.82);
-    tl.to(proxy, { roll: 0.03, duration: 0.5, yoyo: true, repeat: 1 }, 0.82);
+    // Phase A2 — the M3 reveal: a sweeping hero pass toward the front end.
+    // Camera tracks the car's centerline rather than looking dead ahead, so
+    // the sweep reads as an orbit instead of a sideways slide.
+    tl.call(() => { this._revealing = true; }, [], 0.82);
+    tl.to(cam, { z: -2, duration: 1.55, ease: "power1.inOut" }, 0.82);
+    tl.to(cam, { x: -2.6, duration: 0.85, ease: "sine.inOut" }, 0.82);
+    tl.to(cam, { x: 0.6, duration: 0.7, ease: "sine.inOut" }, 1.67);
+    tl.to(cam, { y: 1.9, duration: 0.85, ease: "sine.inOut" }, 0.82);
+    tl.to(cam, { y: 1.1, duration: 0.7, ease: "sine.inOut" }, 1.67);
+    tl.to(this.camera, { fov: 42, duration: 0.85, ease: "sine.inOut" }, 0.82);
+    tl.to(this.camera, { fov: 34, duration: 0.7, ease: "power1.in" }, 1.67);
+
+    // Phase B — punch through the grille: fast whip-pan masked by a flash,
+    // handing off into the abstract "inside the machine" tunnel.
+    tl.call(() => { this._revealing = false; }, [], 2.2);
+    tl.to(cam, { z: -46, duration: 0.65, ease: "power2.in" }, 2.2);
+    tl.to(this.camera, { fov: 52, duration: 0.65, ease: "power1.in" }, 2.2);
+    if (flashEl) {
+      tl.to(flashEl, { opacity: 1, duration: 0.18, ease: "power2.in" }, 2.35);
+      tl.to(flashEl, { opacity: 0, duration: 0.45, ease: "power1.out" }, 2.53);
+    }
+    if (this.car) {
+      tl.to(this.car.group, { visible: false, duration: 0.01 }, 2.5);
+    }
 
     // Phase C — radiator core rush.
-    tl.to(cam, { z: -100, duration: 1.0, ease: "power1.in" }, 1.75);
-    tl.to(this.camera, { fov: 50, duration: 1.0 }, 1.75);
-    tl.to(proxy, { roll: -0.05, duration: 0.9 }, 1.75);
+    tl.to(cam, { z: -100, duration: 1.0, ease: "power1.in" }, 2.55);
+    tl.to(this.camera, { fov: 50, duration: 1.0 }, 2.55);
+    tl.to(proxy, { roll: -0.05, duration: 0.9 }, 2.55);
 
     // Rise to piston height before we reach the engine bay (its base deck is
     // a solid mesh well below this line, so the flyover clears it entirely).
-    tl.to(cam, { y: 2.3, duration: 0.55, ease: "sine.inOut" }, 2.05);
-    tl.to(cam, { y: 0.4, duration: 0.55, ease: "sine.inOut" }, 3.95);
+    tl.to(cam, { y: 2.3, duration: 0.55, ease: "sine.inOut" }, 2.85);
+    tl.to(cam, { y: 0.4, duration: 0.55, ease: "sine.inOut" }, 4.75);
 
     // Phase D — engine bay flyover, slow to let the pistons read.
-    tl.to(cam, { z: -148, duration: 1.35, ease: "power1.inOut" }, 2.7);
-    tl.to(this.camera, { fov: 40, duration: 1.0 }, 2.7);
-    tl.to(cam, { x: 1.6, duration: 0.7, yoyo: true, repeat: 1, ease: "sine.inOut" }, 2.7);
-    tl.to(proxy, { roll: 0, duration: 0.6 }, 2.7);
+    tl.to(cam, { z: -148, duration: 1.35, ease: "power1.inOut" }, 3.5);
+    tl.to(this.camera, { fov: 40, duration: 1.0 }, 3.5);
+    tl.to(cam, { x: 1.6, duration: 0.7, yoyo: true, repeat: 1, ease: "sine.inOut" }, 3.5);
+    tl.to(proxy, { roll: 0, duration: 0.6 }, 3.5);
 
     // Phase E — exhaust pipe, full send.
-    tl.to(cam, { z: -204, duration: 1.05, ease: "power3.in" }, 4.15);
-    tl.to(this.camera, { fov: 66, duration: 1.05, ease: "power2.in" }, 4.15);
-    tl.to(proxy, { roll: 0.4, duration: 1.05 }, 4.15);
-    tl.to(this.tunnel.stages.exhaustFlare, { intensity: 26, duration: 0.5 }, 4.6);
+    tl.to(cam, { z: -204, duration: 1.05, ease: "power3.in" }, 4.95);
+    tl.to(this.camera, { fov: 66, duration: 1.05, ease: "power2.in" }, 4.95);
+    tl.to(proxy, { roll: 0.4, duration: 1.05 }, 4.95);
+    tl.to(this.tunnel.stages.exhaustFlare, { intensity: 26, duration: 0.5 }, 5.4);
 
     // Phase F — exit flare and settle into the hero backdrop.
-    tl.to(cam, { z: -214, duration: 0.35, ease: "power1.out" }, 5.2);
-    tl.to(this.camera, { fov: 42, duration: 0.6, ease: "power2.out" }, 5.2);
-    tl.to(this.tunnel.stages.exhaustFlare, { intensity: 0, duration: 0.8 }, 5.55);
-    tl.to(proxy, { roll: 0, duration: 0.6 }, 5.2);
+    tl.to(cam, { z: -214, duration: 0.35, ease: "power1.out" }, 6.0);
+    tl.to(this.camera, { fov: 42, duration: 0.6, ease: "power2.out" }, 6.0);
+    tl.to(this.tunnel.stages.exhaustFlare, { intensity: 0, duration: 0.8 }, 6.35);
+    tl.to(proxy, { roll: 0, duration: 0.6 }, 6.0);
 
     this._roll = proxy;
     this._transitionTimeline = tl;
@@ -259,7 +325,9 @@ export class World {
     if (this._transitionTimeline) this._transitionTimeline.progress(1).kill();
     this.state = "site";
     this.logoGroup.visible = false;
+    this._revealing = false;
     if (this.tunnel) this.tunnel.root.visible = true;
+    if (this.car) this.car.group.visible = false;
     this.camera.position.set(0, 0.4, -214);
     this.camera.fov = 42;
     this.camera.updateProjectionMatrix();
@@ -279,7 +347,12 @@ export class World {
       this.camera.lookAt(0, 0, 0);
     } else {
       const lookZ = this.camera.position.z - 10;
-      this.camera.lookAt(this.camera.position.x, this.camera.position.y, lookZ);
+      // During the car reveal, aim at the car's centerline and grille height
+      // instead of looking dead ahead — a level gaze from an elevated,
+      // swooping camera sails right over the hood into the cabin beyond it.
+      const lookX = this._revealing ? this.camera.position.x * 0.15 : this.camera.position.x;
+      const lookY = this._revealing ? -1.5 : this.camera.position.y;
+      this.camera.lookAt(lookX, lookY, lookZ);
       if (this._roll) this.camera.rotation.z = this._roll.roll;
     }
 
