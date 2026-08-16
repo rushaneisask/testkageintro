@@ -65,7 +65,7 @@ export class World {
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.0;
+    renderer.toneMappingExposure = 0.92;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer = renderer;
@@ -82,9 +82,9 @@ export class World {
     this.composer.addPass(new RenderPass(new THREE.Scene(), this.camera)); // placeholder, fixed after scene init
     this.bloom = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
+      0.42,
       0.5,
-      0.5,
-      0.92
+      0.95
     );
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
@@ -99,7 +99,7 @@ export class World {
     // fix the RenderPass created before the scene existed
     this.composer.passes[0] = new RenderPass(scene, this.camera);
 
-    const key = new THREE.DirectionalLight(0xffffff, 1.6);
+    const key = new THREE.DirectionalLight(0xffffff, 1.3);
     key.position.set(4, 6, 8);
     scene.add(key);
 
@@ -113,11 +113,14 @@ export class World {
     fillBlue.position.set(6, -2, 4);
     scene.add(fillBlue);
 
-    scene.add(new THREE.AmbientLight(0x30323c, 0.5));
+    scene.add(new THREE.AmbientLight(0x30323c, 0.4));
 
     // Dedicated shadow-casting key light over the car-reveal area, so the
     // M3 grounds itself on the floor instead of looking like it's floating.
-    const carKey = new THREE.DirectionalLight(0xfff4e0, 2.4);
+    // Kept modest — combined with the (also-directional, no-falloff) `key`
+    // light above, this was blowing out the paint's highlights to near-white
+    // and reading as a color shift rather than a lit red.
+    const carKey = new THREE.DirectionalLight(0xfff4e0, 1.35);
     carKey.position.set(12, 22, -14);
     const carKeyTarget = new THREE.Object3D();
     carKeyTarget.position.set(0, 0, -25);
@@ -137,7 +140,7 @@ export class World {
     // A light that rides with the camera — keeps the tunnel interior readable
     // as it travels, without needing distant fixed lights to overexpose the
     // near geometry it passes close by.
-    const travelLight = new THREE.PointLight(0xfff2e6, 2.2, 22, 2);
+    const travelLight = new THREE.PointLight(0xfff2e6, 1.4, 22, 2);
     this.camera.add(travelLight);
     scene.add(this.camera);
 
@@ -264,62 +267,79 @@ export class World {
     tl.to(this.logoMaterial, { emissiveIntensity: 2.4, duration: 0.36, ease: "power2.in" }, 0.5);
     tl.to(this.logoGroup, { visible: false, duration: 0.01 }, 0.86);
 
-    // Phase A2 — the M3 reveal: a sweeping hero pass toward the front end.
+    // Phase A2 — the M3 reveal: a sweeping hero pass that closes all the way
+    // in on the grille (not just toward the car), so the punch-through that
+    // follows actually crosses through it rather than cutting away early.
     // Camera tracks the car's centerline rather than looking dead ahead, so
     // the sweep reads as an orbit instead of a sideways slide.
     tl.call(() => { this._revealing = true; }, [], 0.82);
-    tl.to(cam, { z: -2, duration: 1.55, ease: "power1.inOut" }, 0.82);
-    tl.to(cam, { x: -2.6, duration: 0.85, ease: "sine.inOut" }, 0.82);
-    tl.to(cam, { x: 0.6, duration: 0.7, ease: "sine.inOut" }, 1.67);
-    tl.to(cam, { y: 1.9, duration: 0.85, ease: "sine.inOut" }, 0.82);
-    tl.to(cam, { y: 1.1, duration: 0.7, ease: "sine.inOut" }, 1.67);
-    tl.to(this.camera, { fov: 42, duration: 0.85, ease: "sine.inOut" }, 0.82);
-    tl.to(this.camera, { fov: 34, duration: 0.7, ease: "power1.in" }, 1.67);
+    tl.to(cam, { z: -9, duration: 1.7, ease: "power1.inOut" }, 0.82);
+    tl.to(cam, { x: -2.6, duration: 0.9, ease: "sine.inOut" }, 0.82);
+    tl.to(cam, { x: 0.6, duration: 0.8, ease: "sine.inOut" }, 1.72);
+    tl.to(cam, { y: 1.9, duration: 0.9, ease: "sine.inOut" }, 0.82);
+    tl.to(cam, { y: 1.1, duration: 0.8, ease: "sine.inOut" }, 1.72);
+    tl.to(this.camera, { fov: 42, duration: 0.9, ease: "sine.inOut" }, 0.82);
+    tl.to(this.camera, { fov: 34, duration: 0.8, ease: "power1.in" }, 1.72);
 
-    // Phase B — punch through the grille: fast whip-pan masked by a flash,
-    // handing off into the abstract "inside the machine" tunnel.
-    tl.call(() => { this._revealing = false; }, [], 2.2);
-    tl.to(cam, { z: -46, duration: 0.65, ease: "power2.in" }, 2.2);
-    tl.to(this.camera, { fov: 52, duration: 0.65, ease: "power1.in" }, 2.2);
+    // Phase B — punch through the grille: the camera actually crosses the
+    // grille plane (z = -15, the car's nose) partway through this tween —
+    // the flash is timed to peak right at that crossing, then the car is
+    // hidden once we're already past it, so the cut lands mid-flash instead
+    // of before we've reached the car.
+    tl.call(() => { this._revealing = false; }, [], 2.45);
+    tl.to(cam, { z: -46, duration: 0.85, ease: "power2.in" }, 2.45);
+    tl.to(this.camera, { fov: 54, duration: 0.85, ease: "power1.in" }, 2.45);
     if (flashEl) {
-      tl.to(flashEl, { opacity: 1, duration: 0.18, ease: "power2.in" }, 2.35);
-      tl.to(flashEl, { opacity: 0, duration: 0.45, ease: "power1.out" }, 2.53);
+      tl.to(flashEl, { opacity: 1, duration: 0.2, ease: "power2.in" }, 2.53);
+      tl.to(flashEl, { opacity: 0, duration: 0.5, ease: "power1.out" }, 2.73);
     }
     if (this.car) {
-      tl.to(this.car.group, { visible: false, duration: 0.01 }, 2.5);
+      tl.to(this.car.group, { visible: false, duration: 0.01 }, 2.7);
     }
 
     const stages = this.tunnel.stages;
 
+    // Phase B's z-tween runs until 3.3 — starting Phase C's z-tween any
+    // earlier would fight it for the same property (gsap would silently cut
+    // Phase B short). Handing off right at 3.3 keeps the crossing predictable.
+    const radiatorStart = 3.3;
+
     // Phase C — radiator core rush, handing off exactly where the fins end.
-    tl.to(cam, { z: stages.radiatorEndZ, duration: 0.95, ease: "power1.in" }, 2.55);
-    tl.to(this.camera, { fov: 50, duration: 0.95 }, 2.55);
-    tl.to(proxy, { roll: -0.05, duration: 0.9 }, 2.55);
+    tl.to(cam, { z: stages.radiatorEndZ, duration: 0.95, ease: "power1.in" }, radiatorStart);
+    tl.to(this.camera, { fov: 50, duration: 0.95 }, radiatorStart);
+    tl.to(proxy, { roll: -0.05, duration: 0.9 }, radiatorStart);
+
+    const engineStart = radiatorStart + 0.95; // 4.25, right as the radiator hands off
 
     // Rise to piston height before we reach the engine bay (its base deck is
     // a solid mesh well below this line, so the flyover clears it entirely).
-    tl.to(cam, { y: 2.3, duration: 0.55, ease: "sine.inOut" }, 2.85);
-    tl.to(cam, { y: 0.4, duration: 0.55, ease: "sine.inOut" }, 6.35);
+    tl.to(cam, { y: 2.3, duration: 0.55, ease: "sine.inOut" }, radiatorStart + 0.3);
 
     // Phase D — engine bay flyover, a long weave down the full piston
     // corridor (nine banks deep) so the pumping pistons stay in view the
     // whole way through instead of flashing past in an instant.
-    tl.to(cam, { z: stages.engineEndZ, duration: 3.4, ease: "power1.inOut" }, 3.5);
-    tl.to(this.camera, { fov: 40, duration: 1.0 }, 3.5);
-    tl.to(cam, { x: 1.8, duration: 0.85, yoyo: true, repeat: 3, ease: "sine.inOut" }, 3.5);
-    tl.to(proxy, { roll: 0, duration: 0.6 }, 3.5);
+    const engineDuration = 3.4;
+    tl.to(cam, { z: stages.engineEndZ, duration: engineDuration, ease: "power1.inOut" }, engineStart);
+    tl.to(this.camera, { fov: 40, duration: 1.0 }, engineStart);
+    tl.to(cam, { x: 1.8, duration: 0.85, yoyo: true, repeat: 3, ease: "sine.inOut" }, engineStart);
+    tl.to(proxy, { roll: 0, duration: 0.6 }, engineStart);
+    tl.to(cam, { y: 0.4, duration: 0.55, ease: "sine.inOut" }, engineStart + engineDuration - 0.55);
+
+    const exhaustStart = engineStart + engineDuration - 0.05; // 7.6, tiny overlap on non-z props only
 
     // Phase E — exhaust pipe, full send.
-    tl.to(cam, { z: stages.exhaustStartZ - 58, duration: 1.05, ease: "power3.in" }, 6.85);
-    tl.to(this.camera, { fov: 66, duration: 1.05, ease: "power2.in" }, 6.85);
-    tl.to(proxy, { roll: 0.4, duration: 1.05 }, 6.85);
-    tl.to(this.tunnel.stages.exhaustFlare, { intensity: 26, duration: 0.5 }, 7.3);
+    tl.to(cam, { z: stages.exhaustStartZ - 58, duration: 1.05, ease: "power3.in" }, exhaustStart);
+    tl.to(this.camera, { fov: 66, duration: 1.05, ease: "power2.in" }, exhaustStart);
+    tl.to(proxy, { roll: 0.4, duration: 1.05 }, exhaustStart);
+    tl.to(this.tunnel.stages.exhaustFlare, { intensity: 26, duration: 0.5 }, exhaustStart + 0.45);
+
+    const exitStart = exhaustStart + 1.05;
 
     // Phase F — exit flare and settle into the hero backdrop.
-    tl.to(cam, { z: stages.exhaustEndZ - 4, duration: 0.35, ease: "power1.out" }, 7.9);
-    tl.to(this.camera, { fov: 42, duration: 0.6, ease: "power2.out" }, 7.9);
-    tl.to(this.tunnel.stages.exhaustFlare, { intensity: 0, duration: 0.8 }, 8.25);
-    tl.to(proxy, { roll: 0, duration: 0.6 }, 7.9);
+    tl.to(cam, { z: stages.exhaustEndZ - 4, duration: 0.35, ease: "power1.out" }, exitStart);
+    tl.to(this.camera, { fov: 42, duration: 0.6, ease: "power2.out" }, exitStart);
+    tl.to(this.tunnel.stages.exhaustFlare, { intensity: 0, duration: 0.8 }, exitStart + 0.35);
+    tl.to(proxy, { roll: 0, duration: 0.6 }, exitStart);
 
     this._roll = proxy;
     this._transitionTimeline = tl;

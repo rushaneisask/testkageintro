@@ -19,7 +19,10 @@ function placeCar(gltf) {
       o.castShadow = true;
       o.receiveShadow = true;
       if (o.material) {
-        o.material.envMapIntensity = 1.1;
+        // Kept modest — a stronger env map was blowing the paint's specular
+        // highlights out to near-white, reading as the color shifting rather
+        // than as a lit, glossy red.
+        o.material.envMapIntensity = 0.65;
       }
     }
   });
