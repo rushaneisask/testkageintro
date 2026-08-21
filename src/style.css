@@ -106,8 +106,28 @@ body {
 .loading-bar span {
   display: block;
   height: 100%;
-  width: 0%;
+  width: 30%;
   background: linear-gradient(90deg, var(--red-dim), var(--red));
+  /* Runs until the first real progress report. The car model is inlined into
+     the page, so on a slow connection the browser is still downloading it
+     before any script executes — without this the bar would sit frozen at
+     zero for the whole wait and read as broken. */
+  animation: boot-indeterminate 1.5s ease-in-out infinite;
+}
+
+/* Set once real progress starts arriving; width then tracks the download. */
+.loading-bar span.is-determinate {
+  width: 0%;
+  animation: none;
+}
+
+@keyframes boot-indeterminate {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(340%);
+  }
 }
 
 @keyframes pulse {

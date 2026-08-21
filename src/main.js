@@ -23,6 +23,8 @@ let started = false;
 
 const world = new World(canvas, {
   onLoadProgress: (p) => {
+    // Hand the bar over from its indeterminate sweep to real progress.
+    loadingBar.classList.add("is-determinate");
     gsap.to(loadingBar, { width: `${p * 100}%`, duration: 0.25, ease: "power1.out" });
     if (p >= 1) {
       gsap.to(loading, {
@@ -41,8 +43,17 @@ function revealHero() {
   skipBtn.style.pointerEvents = "none";
 }
 
+// A sustained first-person camera flight filling the screen is a common
+// motion-sickness trigger, so honour the OS setting and cut straight to the
+// site instead. The spinning emblem still gets its moment.
+const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+
 function startTransition() {
   if (started) return;
+  if (prefersReducedMotion.matches) {
+    skipIntro();
+    return;
+  }
   started = true;
   world.playTransition({
     onIntroFade: () => {
