@@ -298,8 +298,12 @@ export class World {
     // of before we've reached the car.
     // Unwind the aim back to straight-ahead just before the punch-through, so
     // the camera is already pointed down the tunnel when the flash cuts.
+    const stages = this.tunnel.stages;
+
     tl.to(this, { _revealBlend: 0, duration: 0.4, ease: "sine.inOut" }, 2.3);
-    tl.to(cam, { z: -46, duration: 0.85, ease: "power2.in" }, 2.45);
+    // Land right at the mouth of the radiator, so the fins are already filling
+    // the frame as the flash clears.
+    tl.to(cam, { z: stages.radiatorStartZ, duration: 0.85, ease: "power2.in" }, 2.45);
     tl.to(this.camera, { fov: 54, duration: 0.85, ease: "power1.in" }, 2.45);
     if (flashEl) {
       tl.to(flashEl, { opacity: 1, duration: 0.2, ease: "power2.in" }, 2.53);
@@ -311,8 +315,6 @@ export class World {
       this.tunnel.root.visible = true;
       if (this.car) this.car.group.visible = false;
     }, [], 2.7);
-
-    const stages = this.tunnel.stages;
 
     // Phase B's z-tween runs until 3.3 — starting Phase C's z-tween any
     // earlier would fight it for the same property (gsap would silently cut

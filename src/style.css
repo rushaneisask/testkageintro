@@ -12,6 +12,12 @@
   box-sizing: border-box;
 }
 
+/* Stops iOS/iPadOS treating a quick second tap as a zoom gesture, which
+   otherwise adds a noticeable delay before ENTER responds. */
+button {
+  touch-action: manipulation;
+}
+
 html,
 body {
   margin: 0;
@@ -26,8 +32,12 @@ body {
 
 #app {
   position: relative;
-  width: 100vw;
+  width: 100%;
   height: 100vh;
+  /* Mobile Safari's 100vh is the height with browser chrome hidden, so the
+     bottom of the scene sits under the toolbar until you scroll. dvh tracks
+     the actually-visible area; the vh above stays as the fallback. */
+  height: 100dvh;
   overflow: hidden;
 }
 

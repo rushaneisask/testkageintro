@@ -243,7 +243,11 @@ function buildExhaustStage() {
 export function buildTunnel() {
   const root = new THREE.Group();
 
-  const radiatorStartZ = -46;
+  // Sits just behind the car's grille (the nose is at z = -15), which is both
+  // where a radiator physically lives and what keeps the flythrough
+  // continuous: further back and the camera crosses ~30 units of empty space
+  // after the punch-through before anything comes into view.
+  const radiatorStartZ = -19;
   const radiatorEndZ = radiatorStartZ - 25 * 1.6; // last of 26 fins, spaced 1.6 apart
 
   const radiator = buildRadiatorStage();
