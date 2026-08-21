@@ -98,56 +98,65 @@ function buildEngineStage() {
   const restY = 2.2;
   const cylCount = 4;
   const boreMat = chromeMaterial(0x9aa2ad);
+  boreMat.side = THREE.BackSide;
   const rodMat = darkMaterial(0x1a1c20);
   const pistonGeo = new THREE.CylinderGeometry(1.42, 1.42, 1.6, 16);
+  const boreGeo = new THREE.CylinderGeometry(1.55, 1.55, 6, 16, 1, true);
+  const rodGeo = new THREE.BoxGeometry(0.4, 4, 0.4);
 
-  // 9 rows x 4 pistons = 36 ignition points — real THREE.PointLights at that
-  // count are a severe per-fragment cost (every light is evaluated for every
-  // lit pixel). An emissive flash on each piston's own material reads the
-  // same as a spark and costs nothing extra to render.
+  // 9 rows x 4 pistons = 36 ignition points. Two things we deliberately do
+  // NOT do here: one THREE.PointLight per piston (36 dynamic lights is a
+  // severe per-fragment cost — every light is evaluated for every lit pixel),
+  // and one material per piston (36 materials means 36 shader programs and a
+  // program switch per piston every frame). Instead the stroke is quantised
+  // into PHASE_BUCKETS groups that share a material, so the whole bank still
+  // ripples out of step but the GPU only ever sees a handful of programs.
+  const PHASE_BUCKETS = 6;
+  const pistonMats = [];
+  for (let b = 0; b < PHASE_BUCKETS; b++) {
+    const m = chromeMaterial(0xe7eaef);
+    m.emissive = new THREE.Color(0xff8a3d);
+    m.emissiveIntensity = 0;
+    pistonMats.push(m);
+    // Pistons in a bucket move and fire together, so one entry drives them all.
+    pistons.push({ material: m, meshes: [], phase: (b / PHASE_BUCKETS) * Math.PI * 2 });
+  }
+
   for (let r = 0; r < rowCount; r++) {
     const z = -r * rowSpacing;
-    const rowPhase = r * 0.9; // stagger rows so the bank doesn't pulse in lockstep
-
     for (let i = 0; i < cylCount; i++) {
       const x = (i / (cylCount - 1) - 0.5) * 13;
+      const bucket = (i + r) % PHASE_BUCKETS; // diagonal ripple down the corridor
 
-      const bore = new THREE.Mesh(
-        new THREE.CylinderGeometry(1.55, 1.55, 6, 16, 1, true),
-        boreMat
-      );
-      bore.material.side = THREE.BackSide;
+      const bore = new THREE.Mesh(boreGeo, boreMat);
       bore.position.set(x, restY, z);
       group.add(bore);
 
-      const pistonMat = chromeMaterial(0xe7eaef);
-      pistonMat.emissive = new THREE.Color(0xff8a3d);
-      pistonMat.emissiveIntensity = 0;
-      const piston = new THREE.Mesh(pistonGeo, pistonMat);
+      const piston = new THREE.Mesh(pistonGeo, pistonMats[bucket]);
       piston.position.set(x, restY, z);
       group.add(piston);
 
-      const rod = new THREE.Mesh(new THREE.BoxGeometry(0.4, 4, 0.4), rodMat);
+      const rod = new THREE.Mesh(rodGeo, rodMat);
       rod.position.set(x, restY - 2.6, z);
       group.add(rod);
 
-      pistons.push({
-        piston,
-        rod,
-        restY,
-        phase: (i / cylCount) * Math.PI * 2 + rowPhase,
-      });
+      pistons[bucket].meshes.push({ piston, rod });
     }
   }
 
   function update(t) {
-    for (const { piston, rod, restY: base, phase } of pistons) {
+    for (const { material, meshes, phase } of pistons) {
       const cycle = Math.sin(t * 6 + phase);
-      piston.position.y = base + cycle * 1.4;
-      rod.position.y = piston.position.y - 2.6;
-      rod.scale.y = 1 + cycle * 0.12;
+      const y = restY + cycle * 1.4;
+      const rodY = y - 2.6;
+      const rodScale = 1 + cycle * 0.12;
+      for (const { piston, rod } of meshes) {
+        piston.position.y = y;
+        rod.position.y = rodY;
+        rod.scale.y = rodScale;
+      }
       const ignite = Math.max(0, Math.sin(t * 6 + phase + Math.PI));
-      piston.material.emissiveIntensity = ignite > 0.85 ? (ignite - 0.85) * 6 : 0;
+      material.emissiveIntensity = ignite > 0.85 ? (ignite - 0.85) * 6 : 0;
     }
   }
 
@@ -177,13 +186,19 @@ function buildExhaustStage() {
   pipe.position.z = -length / 2;
   group.add(pipe);
 
+  // Rings glow hotter toward the exit. Four shared materials across the
+  // gradient rather than one per ring — at this scale the banding is
+  // invisible, and it keeps the shader-program count down.
   const ringCount = 14;
+  const RING_STEPS = 4;
+  const ringGeo = new THREE.TorusGeometry(3, 0.05, 8, 32);
+  const ringMats = Array.from({ length: RING_STEPS }, (_, s) =>
+    emissiveMaterial(0xff5522, 1 + (s / (RING_STEPS - 1)) * 4)
+  );
   for (let i = 0; i < ringCount; i++) {
     const t = i / (ringCount - 1);
-    const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(3, 0.05, 8, 32),
-      emissiveMaterial(0xff5522, 1 + t * 4)
-    );
+    const step = Math.min(RING_STEPS - 1, Math.floor(t * RING_STEPS));
+    const ring = new THREE.Mesh(ringGeo, ringMats[step]);
     ring.position.z = -t * length;
     ring.scale.setScalar(1 - t * 0.15);
     group.add(ring);

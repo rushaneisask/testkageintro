@@ -7,7 +7,7 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { buildEmblemGeometry } from "./emblem.js";
 import { buildTunnel } from "./tunnel.js";
-import { loadCarModel } from "./car.js";
+import { loadCarModel, CAR_AIM } from "./car.js";
 
 const RED = 0xd81324;
 
@@ -19,7 +19,13 @@ export class World {
     this.state = "logo";
     this.ready = false;
     this.car = null;
-    this._revealing = false;
+    // 0 = aim down the direction of travel, 1 = aim at the car. Tweened by
+    // the transition timeline so the two crossfade.
+    this._revealBlend = 0;
+    // Where the reveal camera points; derived from the car placement constants.
+    this._carAim = new THREE.Vector3(CAR_AIM.x, CAR_AIM.y, CAR_AIM.z);
+    this._slowFrames = 0;
+    this._degraded = false;
 
     this._initRenderer();
     this._initScene();
@@ -43,6 +49,7 @@ export class World {
           group.visible = false;
           this.scene.add(group);
           this.car = { group, noseZ, tailZ };
+
           this.renderer.compile(this.scene, this.camera);
         })
         .catch((err) => {
@@ -61,13 +68,21 @@ export class World {
       antialias: true,
       powerPreference: "high-performance",
     });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Capped at 1.5 rather than 2. Everything here is fill-rate bound — the
+    // bloom pass alone resolves the full frame several times — so on a retina
+    // display a ratio of 2 costs ~1.8x the pixels of 1.5 for a difference
+    // that is essentially invisible at this contrast. This is the single
+    // biggest framerate lever on phones and tablets.
+    this._maxPixelRatio = 1.5;
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, this._maxPixelRatio));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 0.92;
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Real-time shadows are off entirely: the car was the only caster and it
+    // now uses a baked contact shadow, so the shadow pass would re-render the
+    // scene each frame to produce nothing.
+    renderer.shadowMap.enabled = false;
     this.renderer = renderer;
 
     this.camera = new THREE.PerspectiveCamera(
@@ -80,8 +95,10 @@ export class World {
 
     this.composer = new EffectComposer(renderer);
     this.composer.addPass(new RenderPass(new THREE.Scene(), this.camera)); // placeholder, fixed after scene init
+    // Bloom runs at half the frame's resolution. It is a blur — the result is
+    // indistinguishable from full-res here, at a quarter of the fill cost.
     this.bloom = new UnrealBloomPass(
-      new THREE.Vector2(window.innerWidth, window.innerHeight),
+      new THREE.Vector2(window.innerWidth / 2, window.innerHeight / 2),
       0.42,
       0.5,
       0.95
@@ -115,32 +132,22 @@ export class World {
 
     scene.add(new THREE.AmbientLight(0x30323c, 0.4));
 
-    // Dedicated shadow-casting key light over the car-reveal area, so the
-    // M3 grounds itself on the floor instead of looking like it's floating.
-    // Kept modest — combined with the (also-directional, no-falloff) `key`
-    // light above, this was blowing out the paint's highlights to near-white
-    // and reading as a color shift rather than a lit red.
+    // Key light over the car-reveal area. Kept modest — combined with the
+    // (also-directional, no-falloff) `key` light above, this was blowing out
+    // the paint's highlights to near-white and reading as a color shift
+    // rather than a lit red.
     const carKey = new THREE.DirectionalLight(0xfff4e0, 1.35);
     carKey.position.set(12, 22, -14);
     const carKeyTarget = new THREE.Object3D();
     carKeyTarget.position.set(0, 0, -25);
     scene.add(carKeyTarget);
     carKey.target = carKeyTarget;
-    carKey.castShadow = true;
-    carKey.shadow.mapSize.set(2048, 2048);
-    carKey.shadow.camera.left = -16;
-    carKey.shadow.camera.right = 16;
-    carKey.shadow.camera.top = 16;
-    carKey.shadow.camera.bottom = -16;
-    carKey.shadow.camera.near = 5;
-    carKey.shadow.camera.far = 60;
-    carKey.shadow.bias = -0.0015;
     scene.add(carKey);
 
     // A light that rides with the camera — keeps the tunnel interior readable
     // as it travels, without needing distant fixed lights to overexpose the
     // near geometry it passes close by.
-    const travelLight = new THREE.PointLight(0xfff2e6, 1.4, 22, 2);
+    const travelLight = new THREE.PointLight(0xfff2e6, 1.1, 22, 2);
     this.camera.add(travelLight);
     scene.add(this.camera);
 
@@ -153,7 +160,6 @@ export class World {
     const floor = new THREE.Mesh(floorGeo, floorMat);
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = -5.4;
-    floor.receiveShadow = true;
     scene.add(floor);
 
     this._initParticles();
@@ -238,14 +244,18 @@ export class World {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
     this.composer.setSize(w, h);
-    this.bloom.setSize(w, h);
+    this.bloom.setSize(w / 2, h / 2);
   }
 
   /** Kicks off the click → flythrough → hero-reveal cinematic. */
   playTransition({ onIntroFade, onComplete, flashEl } = {}) {
     if (this.state !== "logo" || !this.ready) return;
     this.state = "transition";
-    this.tunnel.root.visible = true;
+    // The tunnel stays hidden until we punch through the grille, and the car
+    // is hidden the moment we're inside. Only one of the two is ever drawn:
+    // rendering both at once put the reveal at ~815 draw calls, most of them
+    // tunnel geometry sitting unseen behind the car.
+    this.tunnel.root.visible = false;
     if (this.car) this.car.group.visible = true;
 
     const cam = this.camera.position;
@@ -272,7 +282,7 @@ export class World {
     // follows actually crosses through it rather than cutting away early.
     // Camera tracks the car's centerline rather than looking dead ahead, so
     // the sweep reads as an orbit instead of a sideways slide.
-    tl.call(() => { this._revealing = true; }, [], 0.82);
+    tl.to(this, { _revealBlend: 1, duration: 0.45, ease: "sine.inOut" }, 0.82);
     tl.to(cam, { z: -9, duration: 1.7, ease: "power1.inOut" }, 0.82);
     tl.to(cam, { x: -2.6, duration: 0.9, ease: "sine.inOut" }, 0.82);
     tl.to(cam, { x: 0.6, duration: 0.8, ease: "sine.inOut" }, 1.72);
@@ -286,16 +296,21 @@ export class World {
     // the flash is timed to peak right at that crossing, then the car is
     // hidden once we're already past it, so the cut lands mid-flash instead
     // of before we've reached the car.
-    tl.call(() => { this._revealing = false; }, [], 2.45);
+    // Unwind the aim back to straight-ahead just before the punch-through, so
+    // the camera is already pointed down the tunnel when the flash cuts.
+    tl.to(this, { _revealBlend: 0, duration: 0.4, ease: "sine.inOut" }, 2.3);
     tl.to(cam, { z: -46, duration: 0.85, ease: "power2.in" }, 2.45);
     tl.to(this.camera, { fov: 54, duration: 0.85, ease: "power1.in" }, 2.45);
     if (flashEl) {
       tl.to(flashEl, { opacity: 1, duration: 0.2, ease: "power2.in" }, 2.53);
       tl.to(flashEl, { opacity: 0, duration: 0.5, ease: "power1.out" }, 2.73);
     }
-    if (this.car) {
-      tl.to(this.car.group, { visible: false, duration: 0.01 }, 2.7);
-    }
+    // Swap car out for tunnel at the peak of the flash, so the hand-off is
+    // hidden and only one of the two is ever being drawn.
+    tl.call(() => {
+      this.tunnel.root.visible = true;
+      if (this.car) this.car.group.visible = false;
+    }, [], 2.7);
 
     const stages = this.tunnel.stages;
 
@@ -349,19 +364,43 @@ export class World {
     if (this._transitionTimeline) this._transitionTimeline.progress(1).kill();
     this.state = "site";
     this.logoGroup.visible = false;
-    this._revealing = false;
+    this._revealBlend = 0;
     if (this.tunnel) this.tunnel.root.visible = true;
     if (this.car) this.car.group.visible = false;
     const restZ = this.tunnel ? this.tunnel.stages.exhaustEndZ - 4 : -222;
     this.camera.position.set(0, 0.4, restZ);
     this.camera.fov = 42;
     this.camera.updateProjectionMatrix();
+    // Skipping jumps straight to the end, so snap the aim rather than letting
+    // the per-frame easing swing the camera around from wherever it was.
+    this._roll = null;
+    this.camera.lookAt(0, 0.4, restZ - 10);
+  }
+
+  /**
+   * Drops resolution once if the device clearly cannot hold a smooth frame.
+   * Cheaper than stuttering through the whole cinematic, and only ever fires
+   * once so it can't oscillate between quality levels.
+   */
+  _checkAdaptiveQuality(delta) {
+    if (this._degraded || this.state === "site") return;
+    if (delta > 1 / 30) this._slowFrames++;
+    else this._slowFrames = Math.max(0, this._slowFrames - 1);
+
+    if (this._slowFrames > 45) {
+      this._degraded = true;
+      this._maxPixelRatio = 1;
+      this.renderer.setPixelRatio(1);
+      this.composer.setSize(window.innerWidth, window.innerHeight);
+      this.bloom.setSize(window.innerWidth / 2, window.innerHeight / 2);
+    }
   }
 
   _animate() {
     requestAnimationFrame(this._animate);
     const delta = Math.min(this.clock.getDelta(), 0.05);
     const elapsed = this.clock.elapsedTime;
+    this._checkAdaptiveQuality(delta);
 
     if (this.state === "logo") {
       this.logoGroup.rotation.y = elapsed * 0.6;
@@ -371,14 +410,24 @@ export class World {
       this.camera.position.y += (0.4 - this.pointer.y * 0.6 - this.camera.position.y) * 0.04;
       this.camera.lookAt(0, 0, 0);
     } else {
-      const lookZ = this.camera.position.z - 10;
-      // During the car reveal, aim at the car's centerline and grille height
-      // instead of looking dead ahead — a level gaze from an elevated,
-      // swooping camera sails right over the hood into the cabin beyond it.
-      const lookX = this._revealing ? this.camera.position.x * 0.15 : this.camera.position.x;
-      const lookY = this._revealing ? -1.5 : this.camera.position.y;
+      const p = this.camera.position;
+      // Blend between two aims rather than switching between them: looking
+      // down the direction of travel (inside the machine), and looking at the
+      // car itself (during the reveal). `_revealBlend` is tweened by the
+      // timeline, so this crossfades instead of jumping.
+      //
+      // Aiming at the car's measured centre — not at a fixed point 10 units
+      // ahead — is what keeps it framed: a short look-ahead at grille height
+      // pitches the camera down steeply enough that the car sits outside the
+      // frustum entirely, which is what left the reveal looking blank.
+      const b = this._revealBlend;
+      const c = this._carAim;
+      const lookX = p.x + (c.x - p.x) * b;
+      const lookY = p.y + (c.y - p.y) * b;
+      const lookZ = (p.z - 10) + (c.z - (p.z - 10)) * b;
+
       this.camera.lookAt(lookX, lookY, lookZ);
-      if (this._roll) this.camera.rotation.z = this._roll.roll;
+      if (this._roll) this.camera.rotateZ(this._roll.roll);
     }
 
     if (this.tunnel) this.tunnel.update(delta);
