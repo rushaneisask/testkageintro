@@ -49,13 +49,12 @@ export class World {
           group.visible = false;
           this.scene.add(group);
           this.car = { group, noseZ, tailZ };
-
-          this.renderer.compile(this.scene, this.camera);
         })
         .catch((err) => {
           console.error("BMW model failed to load, continuing without it", err);
         })
         .finally(() => {
+          this._warmUp();
           this.ready = true;
           onLoadProgress?.(1);
         });
@@ -216,6 +215,51 @@ export class World {
     spot.position.set(0, 8, 10);
     spot.target = this.logoGroup;
     this.scene.add(spot);
+  }
+
+  /**
+   * Renders one full frame with the car and tunnel showing, while the loading
+   * overlay still covers the canvas.
+   *
+   * Everything in the cinematic is hidden until its own phase, and
+   * WebGLRenderer.compile() walks the scene with traverseVisible — so a
+   * pre-compile while they are hidden silently does nothing, and the cost of
+   * compiling ~90 shader programs and uploading the car's geometry all landed
+   * on the first frames after ENTER instead. The transition timeline is locked
+   * to wall-clock, so that stall used to eat a chunk of the cinematic outright.
+   *
+   * Drawing them once here pays that cost behind the loading screen.
+   */
+  _warmUp() {
+    const tunnelWas = this.tunnel ? this.tunnel.root.visible : null;
+    const carWas = this.car ? this.car.group.visible : null;
+
+    if (this.tunnel) this.tunnel.root.visible = true;
+    if (this.car) this.car.group.visible = true;
+
+    // The tunnel sits far down -Z and would be frustum-culled from where the
+    // camera stands during the logo, which would leave exactly the shaders we
+    // are trying to warm up uncompiled. Force it to draw for this one frame.
+    const culled = [];
+    if (this.tunnel) {
+      this.tunnel.root.traverse((o) => {
+        if (o.isMesh || o.isInstancedMesh) {
+          culled.push([o, o.frustumCulled]);
+          o.frustumCulled = false;
+        }
+      });
+    }
+
+    try {
+      // Through the composer, so the post-processing passes warm up too.
+      this.composer.render();
+    } catch (err) {
+      console.error("warm-up render failed", err);
+    }
+
+    for (const [o, was] of culled) o.frustumCulled = was;
+    if (this.tunnel) this.tunnel.root.visible = tunnelWas;
+    if (this.car) this.car.group.visible = carWas;
   }
 
   _initTunnel() {

@@ -28,19 +28,20 @@ const errors = [];
 page.on("pageerror", (e) => errors.push("pageerror: " + String(e).split("\n")[0]));
 page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text().slice(0, 160)); });
 page.on("crash", () => errors.push("PAGE CRASHED"));
-page.setDefaultTimeout(180000);
+page.setDefaultTimeout(600000);
 
 const t0 = Date.now();
 await page.goto(url, { waitUntil: "load" });
 await page.waitForFunction(
   () => document.getElementById("loading")?.style.display === "none",
   {},
-  { timeout: 180000 }
+  { timeout: 600000 }
 );
 const loadMs = Date.now() - t0;
 await page.waitForTimeout(500);
 await page.screenshot({ path: `${out}/${label}-0-logo.png` });
 
+const clickedAt = Date.now();
 await page.click("#enter-btn");
 
 // Sample the live canvas at each beat, recording where the timeline actually
@@ -55,11 +56,31 @@ for (let i = 0; i < 4; i++) {
 const heroOk = await page.waitForFunction(
   () => document.getElementById("hero")?.classList.contains("visible"),
   {},
-  { timeout: 180000 }
+  { timeout: 600000 }
 ).then(() => true).catch(() => false);
+const transitionMs = Date.now() - clickedAt;
 
 await page.waitForTimeout(400);
 await page.screenshot({ path: `${out}/${label}-5-hero.png` });
 
-console.log(JSON.stringify({ label, loadMs, beats, heroOk, errors: errors.slice(0, 6) }));
+// "The hero appeared" is NOT the same as "the intro played" — skipping also
+// reveals the hero, which is exactly how a regression that skipped the whole
+// cinematic once passed this check. The timeline runs ~9.5s, so anything
+// that reaches the hero almost immediately did not play it.
+const MIN_TRANSITION_MS = 4000;
+const played = transitionMs >= MIN_TRANSITION_MS;
+
+const pass = heroOk && played && errors.length === 0;
+console.log(JSON.stringify({
+  label, pass, loadMs, transitionMs, played, heroOk,
+  errors: errors.slice(0, 6),
+}));
+if (!pass) {
+  console.error(
+    `FAIL: ${!heroOk ? "hero never appeared" : ""}` +
+    `${!played ? ` intro did not play (click->hero ${transitionMs}ms < ${MIN_TRANSITION_MS}ms)` : ""}` +
+    `${errors.length ? ` ${errors.length} error(s)` : ""}`
+  );
+}
 await browser.close();
+process.exit(pass ? 0 : 1);

@@ -2,13 +2,15 @@ import "./style.css";
 import gsap from "gsap";
 import { World } from "./kage/world.js";
 
-// The flythrough timeline is time-locked to real seconds. Default lag-smoothing
-// (500ms/33ms) perpetually throttles it on sustained slow frames — but fully
-// disabling it lets one catastrophic stall (e.g. a first-time shader compile)
-// vault the whole timeline to completion in a single tick. Widen the window
-// instead: normal-ish frames (<2s) still pace by real elapsed time, only a
-// genuine multi-second stall gets clamped.
-gsap.ticker.lagSmoothing(2000, 300);
+// The flythrough is time-locked to real seconds, so any frame that takes a
+// long time advances it by that much wall-clock. A 2s threshold (what this
+// used to be) meant a single hitch under two seconds — a shader compile, a
+// texture upload, the OS descheduling the tab — silently ate that much of a
+// ~9.5s cinematic, which on a phone or tablet looks like the intro barely
+// playing at all. gsap's defaults treat anything over 500ms as a stall and
+// charge it 33ms instead, which is what we want: hitches cost a dropped
+// frame, never a skipped beat.
+gsap.ticker.lagSmoothing(500, 33);
 
 const canvas = document.getElementById("scene");
 const loading = document.getElementById("loading");
@@ -43,17 +45,18 @@ function revealHero() {
   skipBtn.style.pointerEvents = "none";
 }
 
-// A sustained first-person camera flight filling the screen is a common
-// motion-sickness trigger, so honour the OS setting and cut straight to the
-// site instead. The spinning emblem still gets its moment.
-const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-
+// Deliberately does NOT auto-skip under prefers-reduced-motion. That setting
+// is about motion the visitor did not ask for; pressing ENTER on an intro is
+// an explicit request to watch it, and silently swapping it for a cut to the
+// site makes the whole thing look broken (a lot of iPads run with Reduce
+// Motion on). Anyone who wants out has the SKIP control.
 function startTransition() {
-  if (started) return;
-  if (prefersReducedMotion.matches) {
-    skipIntro();
-    return;
-  }
+  // `world.ready` matters as much as `started`: playTransition refuses to run
+  // before the model is in, and the Enter key is live while the loading
+  // overlay is still up. Without this check an early keypress would flip
+  // `started` with nothing started, and every later press would be swallowed
+  // by the guard below — the intro would never play at all.
+  if (started || !world.ready) return;
   started = true;
   world.playTransition({
     onIntroFade: () => {
